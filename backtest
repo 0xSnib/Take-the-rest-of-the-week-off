@@ -1,0 +1,69 @@
+import requests
+import pandas as pd
+
+def get_binance_data(pair, interval, start_time, end_time):
+    base_url = "https://api.binance.com/api/v3/klines"
+    params = {
+        'symbol': pair,
+        'interval': interval,
+        'startTime': start_time,
+        'endTime': end_time
+    }
+
+    r = requests.get(base_url, params=params)
+    data = r.json()
+
+    df = pd.DataFrame(data, columns=["open_time", "open", "high", "low", "close", "volume", "close_time", "qav", "num_trades", "taker_base_vol", "taker_quote_vol", "ignore"])
+
+    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+    df.set_index('open_time', inplace=True, drop=False)
+
+    # Convert relevant columns to float
+    for col in ['open', 'high', 'low', 'close']:
+        df[col] = df[col].astype(float)
+
+    # Drop rows with NaN values
+    df.dropna(inplace=True)
+
+    return df
+
+def backtest_strategy(initial_balance):
+    start_time = int(pd.Timestamp('2021-01-01').timestamp() * 1000)  # Convert to milliseconds for Binance API
+    end_time = int(pd.Timestamp('2023-01-01').timestamp() * 1000)
+
+    df = get_binance_data("ETHUSDT", "1h", start_time, end_time)
+
+    # Parameters
+    TRANSACTION_FEE = 0.001
+    RISK = 0.02
+    MAX_TRADE = 0.1
+
+    # Calculated once
+    stop_loss_amount = initial_balance * RISK
+    max_trade_amount = initial_balance * MAX_TRADE
+
+    # Iterate over the dataframe
+    for idx, row in df.iterrows():
+        if idx.weekday() == 0:  # Check if it's Monday
+            # Check for best hour to buy on Monday
+            monday_prices = df.loc[idx: idx + pd.Timedelta(hours=23)]
+            buy_price = monday_prices['low'].min()  # Assuming we buy at the lowest point on Monday
+
+            # Deduct transaction fee
+            max_trade_after_fee = max_trade_amount * (1 - TRANSACTION_FEE)
+            eth_bought = max_trade_after_fee / buy_price
+
+            # Check for best hour to sell on Wednesday
+            wednesday_prices = df.loc[idx + pd.Timedelta(days=2): idx + pd.Timedelta(days=2, hours=23)]
+            sell_price = wednesday_prices['high'].max()  # Assuming we sell at the highest point on Wednesday
+
+            # Calculate profit and adjust initial balance
+            profit = eth_bought * sell_price * (1 - TRANSACTION_FEE)
+            initial_balance += (profit - max_trade_after_fee)  # Deducting the initial trade amount and adding the profit
+
+    return initial_balance  # Returns the final balance after backtesting
+
+if __name__ == "__main__":
+    initial_balance = float(input("Enter your initial account balance: "))
+    result = backtest_strategy(initial_balance)
+    print(f"Final account balance after backtesting: ${result:.2f}")

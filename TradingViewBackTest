@@ -1,0 +1,32 @@
+// PineScript - Slap directly into PineView on TradingView
+//View on 1h timeframe
+
+//@version=4
+strategy("Crypto Weekly Trade Bot - Hourly", shorttitle="CWTB-H", overlay=true, initial_capital=10000)
+
+// Input for the buy and sell time
+buy_hour = input(defval=0, title="Buy Hour (0-23)", minval=0, maxval=23)
+sell_hour = input(defval=23, title="Sell Hour (0-23)", minval=0, maxval=23)
+
+// Input for stop loss (in percentage terms)
+stop_loss_percent = input(defval=1, title="Stop Loss (%)", minval=0.1, maxval=10) / 100
+
+// Buy on Monday at the specific hour
+is_buy_time = dayofweek == dayofweek.monday and hour == buy_hour
+// Sell on Wednesday at the specific hour
+is_sell_time = dayofweek == dayofweek.wednesday and hour == sell_hour
+
+// Calculate the position size based on 1% risk
+trade_risk = strategy.equity * 0.01
+distance_to_stop = close * stop_loss_percent
+qty = trade_risk / distance_to_stop
+
+// Execute the trades with dynamic position size based on the calculated risk
+if (is_buy_time)
+    strategy.entry("Buy", strategy.long, qty, stop=close*(1-stop_loss_percent))
+
+if (is_sell_time)
+    strategy.close("Buy")
+
+plotshape(series=is_buy_time, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.labelup, text="BUY")
+plotshape(series=is_sell_time, title="Sell Signal", location=location.abovebar, color=color.red, style=shape.labeldown, text="SELL")
