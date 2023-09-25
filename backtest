@@ -1,69 +1,69 @@
 import requests
-import pandas as pd
+import datetime
 
-def get_binance_data(pair, interval, start_time, end_time):
-    base_url = "https://api.binance.com/api/v3/klines"
+BINANCE_API = "https://api.binance.com/api/v3/klines"
+PAIR = "ETHUSDT"
+INTERVAL = "1h"
+LIMIT = 52 * 7 * 24  # 52 weeks * 7 days * 24 hours
+
+# Parameters
+account_size = 10000  # starting with $10000, for example
+risk_fraction = 0.02
+position_fraction = 0.8
+
+def fetch_data():
     params = {
-        'symbol': pair,
-        'interval': interval,
-        'startTime': start_time,
-        'endTime': end_time
+        "symbol": PAIR,
+        "interval": INTERVAL,
+        "limit": LIMIT
     }
+    response = requests.get(BINANCE_API, params=params)
+    return response.json()
 
-    r = requests.get(base_url, params=params)
-    data = r.json()
+def backtest(data):
+    best_combination = None
+    best_profit = 0
 
-    df = pd.DataFrame(data, columns=["open_time", "open", "high", "low", "close", "volume", "close_time", "qav", "num_trades", "taker_base_vol", "taker_quote_vol", "ignore"])
+    for buy_hour in range(24):
+        for sell_hour in range(24):
+            account_balance = account_size
+            i = 0
+            while i < len(data) - 1:  # Subtracting 1 for safety
+                date = datetime.datetime.fromtimestamp(data[i][0] / 1000)
 
-    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-    df.set_index('open_time', inplace=True, drop=False)
+                if date.weekday() == 0 and date.hour == buy_hour:  # Monday
+                    buy_price = float(data[i][4])  # Close price
+                    position_size = account_balance * position_fraction
+                    stop_loss_price = buy_price - (buy_price * risk_fraction)
 
-    # Convert relevant columns to float
-    for col in ['open', 'high', 'low', 'close']:
-        df[col] = df[col].astype(float)
+                    # Check if stop loss is hit in the next 2 days
+                    stop_loss_hit = False
+                    for j in range(1, 49):  # Check next 48 hours (2 days)
+                        if (i + j) >= len(data) or float(data[i+j][3]) <= stop_loss_price:  # Check low price
+                            stop_loss_hit = True
+                            account_balance -= position_size * risk_fraction
+                            break
 
-    # Drop rows with NaN values
-    df.dropna(inplace=True)
+                    # Increment index to Wednesday
+                    while i < len(data) - 1 and (date.weekday() != 2 or date.hour != sell_hour):
+                        i += 1
+                        date = datetime.datetime.fromtimestamp(data[i][0] / 1000)
 
-    return df
+                    if not stop_loss_hit and i < len(data):  # Check if we're not out of data
+                        sell_price = float(data[i][4])  # Close price
+                        profit = (sell_price - buy_price) * (position_size / buy_price)
+                        account_balance += profit
 
-def backtest_strategy(initial_balance):
-    start_time = int(pd.Timestamp('2021-01-01').timestamp() * 1000)  # Convert to milliseconds for Binance API
-    end_time = int(pd.Timestamp('2023-01-01').timestamp() * 1000)
+                i += 1
 
-    df = get_binance_data("ETHUSDT", "1h", start_time, end_time)
+            if account_balance > best_profit:
+                best_profit = account_balance
+                best_combination = (buy_hour, sell_hour)
 
-    # Parameters
-    TRANSACTION_FEE = 0.001
-    RISK = 0.02
-    MAX_TRADE = 0.1
+    return best_combination, best_profit
 
-    # Calculated once
-    stop_loss_amount = initial_balance * RISK
-    max_trade_amount = initial_balance * MAX_TRADE
+data = fetch_data()
+best_time, profit = backtest(data)
 
-    # Iterate over the dataframe
-    for idx, row in df.iterrows():
-        if idx.weekday() == 0:  # Check if it's Monday
-            # Check for best hour to buy on Monday
-            monday_prices = df.loc[idx: idx + pd.Timedelta(hours=23)]
-            buy_price = monday_prices['low'].min()  # Assuming we buy at the lowest point on Monday
-
-            # Deduct transaction fee
-            max_trade_after_fee = max_trade_amount * (1 - TRANSACTION_FEE)
-            eth_bought = max_trade_after_fee / buy_price
-
-            # Check for best hour to sell on Wednesday
-            wednesday_prices = df.loc[idx + pd.Timedelta(days=2): idx + pd.Timedelta(days=2, hours=23)]
-            sell_price = wednesday_prices['high'].max()  # Assuming we sell at the highest point on Wednesday
-
-            # Calculate profit and adjust initial balance
-            profit = eth_bought * sell_price * (1 - TRANSACTION_FEE)
-            initial_balance += (profit - max_trade_after_fee)  # Deducting the initial trade amount and adding the profit
-
-    return initial_balance  # Returns the final balance after backtesting
-
-if __name__ == "__main__":
-    initial_balance = float(input("Enter your initial account balance: "))
-    result = backtest_strategy(initial_balance)
-    print(f"Final account balance after backtesting: ${result:.2f}")
+print(f"Best time to buy/sell: Monday {best_time[0]}:00, Wednesday {best_time[1]}:00")
+print(f"Profit at the end of the year with best timings: ${profit:.2f}")
