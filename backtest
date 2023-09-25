@@ -7,7 +7,7 @@ INTERVAL = "1h"
 LIMIT = 52 * 7 * 24  # 52 weeks * 7 days * 24 hours
 
 # Parameters
-account_size = 10000  # starting with $10000, for example
+account_size = 10000  # starting with $10,000
 risk_fraction = 0.02
 position_fraction = 0.8
 
@@ -23,47 +23,68 @@ def fetch_data():
 def backtest(data):
     best_combination = None
     best_profit = 0
+    best_transactions = []
 
     for buy_hour in range(24):
         for sell_hour in range(24):
             account_balance = account_size
+            transactions = []
+            week_number = 1
             i = 0
-            while i < len(data) - 1:  # Subtracting 1 for safety
+            while i < len(data) - 1:
                 date = datetime.datetime.fromtimestamp(data[i][0] / 1000)
 
                 if date.weekday() == 0 and date.hour == buy_hour:  # Monday
-                    buy_price = float(data[i][4])  # Close price
+                    buy_price = float(data[i][4])
                     position_size = account_balance * position_fraction
                     stop_loss_price = buy_price - (buy_price * risk_fraction)
 
-                    # Check if stop loss is hit in the next 2 days
                     stop_loss_hit = False
                     for j in range(1, 49):  # Check next 48 hours (2 days)
-                        if (i + j) >= len(data) or float(data[i+j][3]) <= stop_loss_price:  # Check low price
+                        if (i + j) >= len(data):  # Prevent index out of range
+                            break
+                        if float(data[i+j][3]) <= stop_loss_price:
                             stop_loss_hit = True
+                            sell_date = datetime.datetime.fromtimestamp(data[i+j][0] / 1000)
+                            sell_price = float(data[i+j][3])
+                            transactions.append((week_number, buy_price, sell_price, 'Stop Loss', sell_date))
                             account_balance -= position_size * risk_fraction
+                            i += j + 1  # Jump to the next hour after stop loss
                             break
 
-                    # Increment index to Wednesday
-                    while i < len(data) - 1 and (date.weekday() != 2 or date.hour != sell_hour):
-                        i += 1
-                        date = datetime.datetime.fromtimestamp(data[i][0] / 1000)
+                    if not stop_loss_hit:
+                        for j in range(1, 49):
+                            if (i + j) >= len(data):
+                                break
+                            date = datetime.datetime.fromtimestamp(data[i+j][0] / 1000)
+                            if date.weekday() == 2 and date.hour == sell_hour:
+                                sell_price = float(data[i+j][4])
+                                transactions.append((week_number, buy_price, sell_price, 'Wednesday Sell', None))
+                                profit = (sell_price - buy_price) * (position_size / buy_price)
+                                account_balance += profit
+                                i += j + 1  # Jump to the next hour after selling
+                                break
 
-                    if not stop_loss_hit and i < len(data):  # Check if we're not out of data
-                        sell_price = float(data[i][4])  # Close price
-                        profit = (sell_price - buy_price) * (position_size / buy_price)
-                        account_balance += profit
+                    week_number += 1
+                else:
+                    i += 1
 
-                i += 1
+                if account_balance > best_profit:
+                    best_profit = account_balance
+                    best_combination = (buy_hour, sell_hour)
+                    best_transactions = transactions.copy()
 
-            if account_balance > best_profit:
-                best_profit = account_balance
-                best_combination = (buy_hour, sell_hour)
-
-    return best_combination, best_profit
+    return best_combination, best_profit, best_transactions
 
 data = fetch_data()
-best_time, profit = backtest(data)
+best_time, profit, transactions = backtest(data)
 
 print(f"Best time to buy/sell: Monday {best_time[0]}:00, Wednesday {best_time[1]}:00")
 print(f"Profit at the end of the year with best timings: ${profit:.2f}")
+
+print("\nTransactions:")
+for txn in transactions:
+    if txn[3] == 'Stop Loss':
+        print(f"Week {txn[0]}: Buy @ ${txn[1]:.2f}, {txn[3]} @ ${txn[2]:.2f} on {txn[4].strftime('%Y-%m-%d %H:%M')}")
+    else:
+        print(f"Week {txn[0]}: Buy @ ${txn[1]:.2f}, {txn[3]} @ ${txn[2]:.2f}")
