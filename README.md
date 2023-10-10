@@ -23,3 +23,8 @@ David Holt 🌴
 ·
 4h
 give it like 3 hours, someone's gonna go run the numbers and post a thread of charts basically going "oh wait yeah he's right wtf"
+
+
+
+Oh wait yeah he's right wtf
+Buy Monday 2000GMT, Sell Wednesday 0100
